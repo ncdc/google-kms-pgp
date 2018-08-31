@@ -17,10 +17,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	cloudkms "github.com/google/google-api-go-client/cloudkms/v1"
 	"github.com/pkg/errors"
+	"github.com/spf13/pflag"
 	"golang.org/x/crypto/openpgp"
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/packet"
@@ -30,10 +32,17 @@ import (
 )
 
 var (
-	cfg = packet.Config{}
+	cfg            = packet.Config{}
+	inputFileName  string
+	outputFileName string
 )
 
 func main() {
+	pflag.StringVar(&inputFileName, "in", inputFileName, "input file name. If unset, will use the contents from stdin.")
+	pflag.StringVar(&outputFileName, "out", outputFileName, "output file name")
+
+	pflag.Parse()
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v", err)
 	}
@@ -68,7 +77,7 @@ Environment variables:
 
 func run() error {
 	keyName := os.Getenv("KEY_NAME")
-	if keyName == "" || len(os.Args) != 2 {
+	if keyName == "" {
 		usage()
 	}
 
@@ -103,8 +112,30 @@ func run() error {
 	switch os.Args[1] {
 	case "sign":
 		// Emit
-		if err := openpgp.ArmoredDetachSignText(os.Stdout, entity, os.Stdin, &cfg); err != nil {
+		var output io.Writer = os.Stdout
+		var input io.Reader = os.Stdin
+		if outputFileName != "" {
+			outputFile, err := os.Create(outputFileName)
+			if err != nil {
+				return err
+			}
+			defer outputFile.Close()
+			output = outputFile
+		}
+
+		if inputFileName != "" {
+			inputFile, err := os.Open(inputFileName)
+			if err != nil {
+				return err
+			}
+			defer inputFile.Close()
+			input = inputFile
+		}
+		if err := openpgp.ArmoredDetachSignText(output, entity, input, &cfg); err != nil {
 			return errors.Wrap(err, "could not sign")
+		}
+		if output == os.Stdout {
+			fmt.Println()
 		}
 	case "generate":
 		uidName := os.Getenv("PGP_UID_NAME")
